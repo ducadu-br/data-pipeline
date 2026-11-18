@@ -149,14 +149,7 @@ Aplicar no Neon (SQL Editor ou CLI), nesta ordem: `007_dim_lojas_merchant_id.sql
 
 ### Ingest iFood local (mesmo código da Lambda)
 
-Na raiz do repo, com `.env` e `aws sso login` (e `AWS_PROFILE` se usar SSO):
-
-```powershell
-uv run --directory scripts python run_backfill_local.py
-uv run --directory scripts python run_ingest_local.py
-```
-
-Dependências ficam em `scripts/pyproject.toml` (Windows-compatible `psycopg[binary]`).
+A pasta **`scripts/`** é **local e não vai para o remoto** (ver `.gitignore`). Use-a para backfill longo e testes D-1 com `uv`, `.env` na raiz e `aws sso login` (e `AWS_PROFILE` se usar SSO). Em produção o caminho oficial é a Lambda `ingest_ifood` + invokes pontuais.
 
 Variáveis úteis: `IFOOD_INGEST_START_DATE`, `IFOOD_INGEST_END_DATE`, `IFOOD_BACKFILL_YEAR`, `IFOOD_BACKFILL_FROM_MONTH`, `IFOOD_BACKFILL_TO_MONTH`, `IFOOD_BACKFILL_END_DATE`.
 
@@ -173,7 +166,7 @@ Variáveis úteis: `IFOOD_INGEST_START_DATE`, `IFOOD_INGEST_END_DATE`, `IFOOD_BA
 | Reviews com filtro errado / comentários esparsos | API V2 usa `dateFrom`/`dateTo` e `pageSize`, não `beginReviewDate` | Ajuste em `IfoodClient.list_reviews` |
 | KPIs só até certa data | `IFOOD_INGEST_ANALYTICS` desligado na Lambda | Default `true` + env na função `ingest_ifood` |
 | Conciliação vazia | 404 em competência aberta ou link só em `downloadUrl` | Reconciliação por mês + aliases de download; produção exige `IFOOD_USE_HOMOLOGATION=false` |
-| Pedidos param no meio do backfill | Timeout SSO / Lambda | Backfill local por mês; `IFOOD_INGEST_INCREMENTAL=false` para reprocessar |
+| Pedidos param no meio do backfill | Timeout SSO / Lambda | Backfill **só na máquina local** (`scripts/`, não versionado); invokes Lambda em janelas curtas |
 
 
 ```sql
@@ -201,5 +194,5 @@ ON CONFLICT (pattern) DO NOTHING;
 |----------|---------|
 | Ingest iFood | `lambda/src/ingest/ifood.py` |
 | Ingest Sheets | `lambda/src/ingest/sheets.py` |
-| Ingest / backfill local | `scripts/run_ingest_local.py`, `scripts/run_backfill_local.py` |
+| Ingest / backfill local | pasta `scripts/` (gitignore; operador) — código em `lambda/src/ingest/ifood.py` |
 | Tabelas raw | `sql/001_ifood_tables.sql`, `004`, `005` |

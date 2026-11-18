@@ -23,13 +23,5 @@ clean_and_classifies_products.py
 docs/
 apps/
 
-# Logs de backfill/ingest local
-scripts/*
-!scripts/run_ingest_local.py
-!scripts/run_backfill_local.py
-!scripts/setup_ingest_schedules.py
-!scripts/pyproject.toml
-!scripts/uv.lock
-!scripts/.python-version
-scripts/*.log
-scripts/backfill-*.log
+# Scripts, logs e venv locais (backfill/ingest só na máquina do operador)
+scripts/

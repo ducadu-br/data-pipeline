@@ -1,4 +1,4 @@
-name: Deploy Lambda
+name: Deploy Saipos Lambda
 
 on:
   workflow_dispatch:
@@ -6,7 +6,7 @@ on:
   #   branches:
   #     - main
   #   paths:
-  #     - 'lambda/**'   # só roda se mexer na pasta lambda
+  #     - 'lambda/**'
 
 jobs:
   deploy:
@@ -50,7 +50,7 @@ jobs:
         run: |
           aws lambda update-function-code \
             --region sa-east-1 \
-            --function-name ingest_job \
+            --function-name ingest-saipos \
             --zip-file fileb://lambda.zip
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
