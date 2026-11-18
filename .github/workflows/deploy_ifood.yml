@@ -22,7 +22,12 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -r requirements.txt -t package
+          rm -rf package
+          pip install \
+            --platform manylinux2014_x86_64 \
+            --only-binary=:all: \
+            --target package \
+            -r requirements.txt
 
       - name: Download cloudflared
         run: |
@@ -43,10 +48,12 @@ jobs:
 
       - name: Deploy to AWS Lambda
         run: |
+          aws s3 cp lambda_ifood.zip s3://ducadu-landing/deploy/lambda_ifood.zip
           aws lambda update-function-code \
             --region sa-east-1 \
             --function-name ingest_ifood \
-            --zip-file fileb://lambda_ifood.zip
+            --s3-bucket ducadu-landing \
+            --s3-key deploy/lambda_ifood.zip
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}

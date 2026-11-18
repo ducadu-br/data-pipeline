@@ -1,4 +1,5 @@
 -- Admin web app (admin.ducadu.com.br) — usuários e papéis no NeonDB.
+-- Descontinuado: aplicar sql/008_drop_admin_auth.sql para remover do banco.
 
 CREATE TYPE admin_app_role AS ENUM ('admin', 'funcionario', 'leitura');
 
