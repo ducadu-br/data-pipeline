@@ -92,8 +92,13 @@ Lista enxuta `loja_id`, `loja_nome`, `merchant_id` onde o de-para existe — út
 | Venda | `canal`, `tipo`, `categoria`, `status_atual`, `valor_venda`, `valor_pagamento` |
 | Flags (Financial) | `flag_cancelado`, `flag_concluido` — `%CANCEL%`, `%CONCLUD%` |
 | Chamados | `flag_chamado` — eventos × `dim_ifood_evento_chamado` |
+| Cancelamento (JSON) | `motivo_cancelamento`, `origem_cancelamento`, `codigo_cancelamento`, `estagio_cancelamento`. Na Sales de nov/2026 o evento de cancelamento e o handshake vêm sem `metadata`; `orderStatusHistory` vem vazio. `codigo_cancelamento` sai de `REFUND.metadata.cancelCode` quando existe |
+| Chamado (JSON) | `momento_chamado`, `resposta_loja_aproximada`, `motivo_chamado`, `chamado_em`, `resposta_em`. Ficam nulos enquanto a Sales não mandar o metadata do handshake |
+| Super | `impacto_super` — sempre nulo. O Portal de Redes continua sendo a fonte do `SIM` |
 | Eventos | `qtd_eventos`, `ultimo_evento_*` |
 | Review | `review_id`, `nota_review`, `tem_comentario` |
+
+`resposta_loja_aproximada` traduz o `status` do `HANDSHAKE_SETTLEMENT` para o vocabulário do portal. `resposta_loja_status` guarda o valor cru da API. Origem da API (`CUSTOMER`, `MERCHANT`, `LOGISTICS`, `SYSTEM`) não é o trio `CLIENTE` / `LOJA` / `MERCHANT` da planilha.
 
 ### `v_fato_ifood_loja_dia` (grão: **loja × `data_referencia`**)
 
@@ -105,7 +110,8 @@ Lista enxuta `loja_id`, `loja_nome`, `merchant_id` onde o de-para existe — út
 | `gmv_*`, `ticket_medio_concluidos` | Financial Sales |
 | `reviews_qtd`, `nota_media_dia` | `ifood_reviews` |
 | `review_summary_raw` | Snapshot Review summary |
-| `kpi_*_analytics` | `ifood_analytics_kpi_daily` |
+| `kpi_*_analytics` | `ifood_analytics_kpi_daily` (`orders_kpis_orderStatus`) |
+| Motivo, origem, estágio, GMV e estorno do cancelamento | `v_ifood_cancelamento_analytics` — dia (`hora` nula) ou hora (`orders_kpis_cancellation_hour`) |
 | `saldo_settlement`, `saldo_anticipation`, `eventos_financeiros_*` | 005 / financial events |
 
 **Pedidos para metas operacionais iFood:** colunas **Financial** (`pedidos_*`, `taxa_cancelamento_pct_financial`). Analytics em paralelo para comparação com Portal.
@@ -119,6 +125,7 @@ Lista enxuta `loja_id`, `loja_nome`, `merchant_id` onde o de-para existe — út
 | `v_ifood_kpis_mes` | loja × mês | Pedidos, cancelamentos, chamados (eventos), GMV |
 | `v_ifood_reviews_nota_mes` | loja × mês | **Nota iFood mês Ducadu** — média ponderada por `reviews_qtd` |
 | `v_ifood_review_summary_ultimo_mes` | loja × mês | Último JSON de summary no mês (nota app ~3m — parse no app) |
+| `v_ifood_cancelamento_analytics` | loja × dia × (hora) × motivo | Agregado Analytics de cancelamento. Entra no próximo ingest; dias antigos precisam de uma passada sem o `_SUCCESS` desse prefixo |
 
 Metas, NPS Falaê, nota nutricionista e **score 4×25%** não estão no Neon; o Central combina esses insumos com as views acima (ou APIs diretas) no front.
 
@@ -133,6 +140,9 @@ Metas, NPS Falaê, nota nutricionista e **score 4×25%** não estão no Neon; o 
 | Cancelados n e % | Financial nas views; Analytics em `kpi_*_analytics` | Sim (validar vs Selo) |
 | Concluídos | `pedidos_concluidos` | Sim |
 | Chamados n e % | `pedidos_com_chamado`, `taxa_chamados_pct_eventos` | Parcial — padrões de evento |
+| Motivo e origem do cancelamento | `v_ifood_cancelamento_analytics` (agregado) e colunas de `v_fato_ifood_pedido` (pedido, se o JSON tiver metadata) | Parcial |
+| Momento e resposta do chamado | `momento_chamado`, `resposta_loja_aproximada` em `v_fato_ifood_pedido` | Parcial — aproximação do handshake; o texto do prêmio segue o portal |
+| Impacto no Super | — | Fora da API. Exportação do Portal: Cancelamentos e Negociações e chamados |
 | Saldo / GMV | `gmv_sale_balance` / `v_fato_ifood_pedido` | Sim |
 | Nota app (summary) | `v_ifood_review_summary_ultimo_mes` | Sim |
 | Nota mês Ducadu | `v_ifood_reviews_nota_mes` | Sim |
@@ -145,7 +155,7 @@ Metas, NPS Falaê, nota nutricionista e **score 4×25%** não estão no Neon; o 
 
 ### Aplicar migrations
 
-Aplicar no Neon (SQL Editor ou CLI), nesta ordem: `007_dim_lojas_merchant_id.sql` → `006_ifood_marts.sql`.
+Aplicar no Neon (SQL Editor ou CLI), nesta ordem: `007_dim_lojas_merchant_id.sql` → `006_ifood_marts.sql` → `009_ifood_ocorrencias.sql`. O `009` substitui `v_fato_ifood_pedido` acrescentando colunas no fim.
 
 ### Ingest iFood local (mesmo código da Lambda)
 
@@ -183,7 +193,7 @@ ON CONFLICT (pattern) DO NOTHING;
 |------|------|
 | MVs / refresh | Só se volume ou latência exigirem; hoje views only |
 | Pivot financeiro por `event_name` | View opcional sobre `ifood_financial_events` |
-| Chamados Selo | Atualizar `dim_ifood_evento_chamado` ou ingest Order |
+| Chamados Selo | `impacto_super` não tem endpoint. O `SIM` do placar e do prêmio continua na exportação do Portal de Redes |
 | Join Saipos | `v_dim_lojas_ifood.loja_id` ↔ `sales_status_histories.id_store` |
 
 ---

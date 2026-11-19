@@ -11,6 +11,7 @@ from psycopg.types.json import Json
 from src.config import (
     IFOOD_MERCHANT_IDS,
     LANDING_IFOOD_ANALYTICS,
+    LANDING_IFOOD_ANALYTICS_CANCELLATION,
     LANDING_IFOOD_ANTICIPATIONS,
     LANDING_IFOOD_FINANCIAL_EVENTS,
     LANDING_IFOOD_RECONCILIATION,
@@ -22,7 +23,14 @@ from src.config import (
 from src.db import get_conn, upsert
 from src.ifood.auth import get_access_token
 from src.ifood.client import IfoodClient
-from src.ifood.kpis import day_reference_bounds, orders_kpis_body_order_status, parse_order_status_counts
+from src.ifood.kpis import (
+    day_reference_bounds,
+    merge_kpi_pages,
+    orders_kpis_body_cancellation,
+    orders_kpis_body_order_status,
+    parse_grouped_kpis,
+    parse_order_status_counts,
+)
 from src.utils.dates import daterange
 from src.utils.storage import (
     already_ingested,
@@ -535,33 +543,31 @@ def _ingest_reconciliation_competence(
     return 1
 
 
-def _ingest_analytics_day(
-    client: IfoodClient,
+def _fetch_kpis_pages(client: IfoodClient, merchant_id: str, body_for_page) -> dict:
+    pages: list[dict] = []
+    page = 1
+    while page <= 20:
+        payload = client.post_merchant_order_kpis(merchant_id, body_for_page(page))
+        if not isinstance(payload, dict):
+            break
+        pages.append(payload)
+        total_pages = int(payload.get("totalPages") or 1)
+        if page >= total_pages or not payload.get("data"):
+            break
+        page += 1
+    return merge_kpi_pages(pages)
+
+
+def _upsert_analytics_row(
     *,
     merchant_id: str,
     day: date,
-    incremental: bool,
-) -> int:
-    prefix = build_prefix(LANDING_IFOOD_ANALYTICS, merchant_id, str(day))
-    kind = "orders_kpis_orderStatus"
-
-    if incremental and already_ingested(prefix):
-        print(f"[SKIP] iFood analytics merchant={merchant_id} day={day}")
-        return 0
-
-    if not incremental:
-        delete_prefix(prefix)
-
-    print(f"[INFO] iFood analytics merchant={merchant_id} day={day}")
-    gte_s, lte_s = day_reference_bounds(day)
-    gte_dt = datetime.combine(day, time.min, tzinfo=timezone.utc)
-    lte_dt = datetime.combine(day, time.max, tzinfo=timezone.utc)
-
-    body = orders_kpis_body_order_status(gte=gte_s, lte=lte_s)
-    payload = client.post_merchant_order_kpis(merchant_id, body)
-    save_json(payload, prefix=prefix, file_prefix="kpis_orderStatus")
-
-    counts = parse_order_status_counts(payload)
+    gte_dt: datetime,
+    lte_dt: datetime,
+    kind: str,
+    counts: dict,
+    payload: dict,
+) -> None:
     row = (
         merchant_id,
         day,
@@ -577,9 +583,137 @@ def _ingest_analytics_day(
     finally:
         conn.close()
 
+
+def _ingest_analytics_status_day(
+    client: IfoodClient,
+    *,
+    merchant_id: str,
+    day: date,
+    incremental: bool,
+    gte_s: str,
+    lte_s: str,
+    gte_dt: datetime,
+    lte_dt: datetime,
+) -> int:
+    prefix = build_prefix(LANDING_IFOOD_ANALYTICS, merchant_id, str(day))
+    if incremental and already_ingested(prefix):
+        print(f"[SKIP] iFood analytics status merchant={merchant_id} day={day}")
+        return 0
+
+    if not incremental:
+        delete_prefix(prefix)
+
+    print(f"[INFO] iFood analytics status merchant={merchant_id} day={day}")
+    payload = client.post_merchant_order_kpis(
+        merchant_id,
+        orders_kpis_body_order_status(gte=gte_s, lte=lte_s),
+    )
+    save_json(payload, prefix=prefix, file_prefix="kpis_orderStatus")
+    counts = parse_order_status_counts(payload)
+    _upsert_analytics_row(
+        merchant_id=merchant_id,
+        day=day,
+        gte_dt=gte_dt,
+        lte_dt=lte_dt,
+        kind="orders_kpis_orderStatus",
+        counts=counts,
+        payload=payload,
+    )
     mark_success(prefix)
-    print(f"[DONE-DAY] iFood analytics merchant={merchant_id} day={day} statuses={len(counts)}")
+    print(f"[DONE-DAY] iFood analytics status merchant={merchant_id} day={day} statuses={len(counts)}")
     return 1
+
+
+def _ingest_analytics_cancellation_day(
+    client: IfoodClient,
+    *,
+    merchant_id: str,
+    day: date,
+    incremental: bool,
+    gte_s: str,
+    lte_s: str,
+    gte_dt: datetime,
+    lte_dt: datetime,
+) -> int:
+    """Reason, origin, code and stage for cancelled orders, by day and by hour.
+
+    Own landing prefix so a day already marked for status KPIs is still fetched.
+    """
+    prefix = build_prefix(LANDING_IFOOD_ANALYTICS_CANCELLATION, merchant_id, str(day))
+    if incremental and already_ingested(prefix):
+        print(f"[SKIP] iFood analytics cancellation merchant={merchant_id} day={day}")
+        return 0
+
+    if not incremental:
+        delete_prefix(prefix)
+
+    print(f"[INFO] iFood analytics cancellation merchant={merchant_id} day={day}")
+    specs = (
+        ("orders_kpis_cancellation", False, "kpis_cancellation"),
+        ("orders_kpis_cancellation_hour", True, "kpis_cancellation_hour"),
+    )
+    for kind, by_hour, file_prefix in specs:
+        payload = _fetch_kpis_pages(
+            client,
+            merchant_id,
+            lambda page, hour=by_hour: orders_kpis_body_cancellation(
+                gte=gte_s,
+                lte=lte_s,
+                by_hour=hour,
+                page=page,
+            ),
+        )
+        save_json(payload, prefix=prefix, file_prefix=file_prefix)
+        rows = parse_grouped_kpis(payload)
+        _upsert_analytics_row(
+            merchant_id=merchant_id,
+            day=day,
+            gte_dt=gte_dt,
+            lte_dt=lte_dt,
+            kind=kind,
+            counts={"rows": rows},
+            payload=payload,
+        )
+        print(
+            f"[DONE-DAY] iFood analytics cancellation merchant={merchant_id} "
+            f"day={day} kind={kind} groups={len(rows)}"
+        )
+
+    mark_success(prefix)
+    return 1
+
+
+def _ingest_analytics_day(
+    client: IfoodClient,
+    *,
+    merchant_id: str,
+    day: date,
+    incremental: bool,
+) -> int:
+    gte_s, lte_s = day_reference_bounds(day)
+    gte_dt = datetime.combine(day, time.min, tzinfo=timezone.utc)
+    lte_dt = datetime.combine(day, time.max, tzinfo=timezone.utc)
+    bounds = {
+        "gte_s": gte_s,
+        "lte_s": lte_s,
+        "gte_dt": gte_dt,
+        "lte_dt": lte_dt,
+    }
+    status_rows = _ingest_analytics_status_day(
+        client,
+        merchant_id=merchant_id,
+        day=day,
+        incremental=incremental,
+        **bounds,
+    )
+    cancel_rows = _ingest_analytics_cancellation_day(
+        client,
+        merchant_id=merchant_id,
+        day=day,
+        incremental=incremental,
+        **bounds,
+    )
+    return 1 if status_rows or cancel_rows else 0
 
 
 def _ingest_review_summary_day(
