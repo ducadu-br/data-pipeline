@@ -193,9 +193,10 @@ SELECT
     dl.id AS loja_id,
     COALESCE(dl.loja, k.merchant_id::text) AS loja_nome,
     k.reference_date,
+    -- A API manda a hora como "HH:00" (ex.: "22:00"). O agregado do dia não traz hora.
     CASE
         WHEN k.request_kind = 'orders_kpis_cancellation_hour'
-            THEN NULLIF(row.elem ->> 'orderCreationHour', '')::int
+            THEN NULLIF(split_part(row.elem ->> 'orderCreationHour', ':', 1), '')::int
         ELSE NULL
     END AS hora,
     row.elem ->> 'cancellationCode' AS codigo,
